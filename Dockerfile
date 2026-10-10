@@ -8,5 +8,5 @@ RUN mvn -q package -DskipTests
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=build /app/target/volunteer-scheduler-1.0.0.jar app.jar
-EXPOSE 10000
+EXPOSE 8080
 ENTRYPOINT ["java","-jar","app.jar"]
