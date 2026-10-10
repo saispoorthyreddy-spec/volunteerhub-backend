@@ -1,3 +1,4 @@
+
 package com.shiftly;
 
 import org.springframework.boot.SpringApplication;
@@ -7,7 +8,10 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @SpringBootApplication
 @EntityScan(basePackages = "com.shiftly.domain")
-@EnableJpaRepositories(considerNestedRepositories = true)
+@EnableJpaRepositories(
+        basePackages = "com.shiftly",
+        considerNestedRepositories = true
+)
 public class App {
 
     public static void main(String[] args) {
