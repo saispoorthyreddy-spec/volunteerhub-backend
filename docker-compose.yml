@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    environment: { POSTGRES_DB: shifts, POSTGRES_USER: shifts, POSTGRES_PASSWORD: shifts }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U shifts"], interval: 5s, retries: 10 }
+  app:
+    build: .
+    ports: ["8080:8080"]
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/shifts
+      DB_USER: shifts
+      DB_PASSWORD: shifts
+      JWT_SECRET: ${JWT_SECRET:-change-me-change-me-change-me-change-me}
+volumes: { pgdata: {} }

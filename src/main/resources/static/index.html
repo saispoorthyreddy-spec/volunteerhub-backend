@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shiftboard – volunteer shifts for events</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#10333a;--mist:#eef3f2;--paper:#fff;--vest:#f4b400;--line:#cfdad8;--bad:#b3261e;--muted:#4f6a6e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--mist);color:var(--ink);font:16px/1.5 Archivo,system-ui,sans-serif}
+header{background:var(--ink);color:#fff;display:flex;gap:1.5rem;align-items:center;padding:.75rem 1.25rem;flex-wrap:wrap}
+header h1{font-size:1.25rem;margin:0;font-stretch:125%;font-weight:800;letter-spacing:.01em}
+nav{display:flex;gap:.25rem;flex:1;flex-wrap:wrap}
+nav button,.link{background:none;border:0;color:inherit;font:inherit;padding:.4rem .75rem;border-radius:6px;cursor:pointer}
+nav button[aria-current=page]{background:var(--vest);color:var(--ink);font-weight:700}
+main{max-width:880px;margin:0 auto;padding:1.5rem 1.25rem 4rem}
+h2{font-size:1.6rem;font-stretch:112%;margin:.2rem 0 1rem}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:1rem 1.25rem;margin-bottom:.9rem}
+.card h3{margin:0;font-size:1.1rem}.meta{color:var(--muted);font-size:.92rem;margin:.15rem 0 .6rem}
+.row{display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end}
+label{display:flex;flex-direction:column;font-size:.9rem;font-weight:600;gap:.25rem;flex:1;min-width:150px}
+input,select{font:inherit;padding:.5rem .6rem;border:1px solid var(--line);border-radius:6px;background:#fff}
+button.btn{background:var(--ink);color:#fff;border:0;border-radius:6px;padding:.55rem 1rem;font:inherit;font-weight:700;cursor:pointer}
+button.btn.alt{background:#fff;color:var(--ink);border:1px solid var(--ink)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--vest);outline-offset:2px}
+.pips{display:flex;flex-wrap:wrap;gap:4px;margin:.4rem 0}
+.pip{width:18px;height:26px;border-radius:3px;border:2px solid var(--ink)}
+.pip.full{background:var(--ink)}
+.pip.wait{background:repeating-linear-gradient(45deg,var(--vest) 0 3px,#fff 3px 6px)}
+.tag{display:inline-block;padding:.05rem .5rem;border-radius:99px;font-size:.82rem;font-weight:700;background:var(--vest)}
+.tag.ok{background:var(--ink);color:#fff}
+#msg{position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);padding:.6rem 1rem;border-radius:8px;background:var(--ink);color:#fff;display:none;max-width:90vw}
+#msg.err{background:var(--bad)}
+.auth{max-width:420px;margin:3rem auto}.empty{color:var(--muted);padding:1rem 0}
+@media (prefers-reduced-motion:no-preference){.pip{transition:background .3s}}
+</style>
+</head>
+<body>
+<header><h1>Shiftboard</h1><nav id="nav" aria-label="Main"></nav><span id="who"></span></header>
+<main id="app"></main>
+<div id="msg" role="status"></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let session = JSON.parse(localStorage.getItem('session') || 'null'), tab = null;
+
+function say(text, err) { const m = $('#msg'); m.textContent = text; m.className = err ? 'err' : ''; m.style.display = 'block'; clearTimeout(say.t); say.t = setTimeout(() => m.style.display = 'none', 4000); }
+async function api(path, method = 'GET', body) {
+  const res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json', ...(session ? { Authorization: 'Bearer ' + session.token } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401 && session && !path.startsWith('/auth')) { logout(); throw new Error('Your session expired. Sign in again.'); }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || 'Something went wrong'); }
+  return res.status === 204 ? null : res.json();
+}
+const act = fn => async (...a) => { try { await fn(...a); } catch (e) { say(e.message, true); } };
+const fmt = d => new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+const pips = s => '<div class="pips" aria-hidden="true">' + Array.from({ length: s.capacity }, (_, i) => `<span class="pip ${i < s.confirmed ? 'full' : ''}"></span>`).join('') + Array.from({ length: s.waitlisted }, () => '<span class="pip wait"></span>').join('') + '</div>';
+
+function logout() { localStorage.removeItem('session'); session = null; tab = null; render(); }
+function setTab(t) { tab = t; render(); }
+
+function render() {
+  $('#who').innerHTML = session ? `${esc(session.name)} (${session.role.toLowerCase()}) <button class="link" onclick="logout()">Sign out</button>` : '';
+  const tabs = !session ? [] : session.role === 'ORGANIZER' ? [['dash', 'Dashboard'], ['new', 'Create event or shift']] : [['browse', 'Browse shifts'], ['mine', 'My shifts'], ['notes', 'Notifications']];
+  if (session && !tab) tab = tabs[0][0];
+  $('#nav').innerHTML = tabs.map(([k, l]) => `<button ${k === tab ? 'aria-current="page"' : ''} onclick="setTab('${k}')">${l}</button>`).join('');
+  if (!session) return authView();
+  ({ dash, new: newView, browse, mine, notes })[tab]();
+}
+
+function authView(mode = 'login') {
+  $('#app').innerHTML = `<form class="card auth" id="f"><h2>${mode === 'login' ? 'Sign in' : 'Create your account'}</h2>
+   ${mode === 'login' ? '' : '<label>Name<input name="name" required></label><br><label>I am an<select name="role"><option value="VOLUNTEER">Volunteer</option><option value="ORGANIZER">Organizer</option></select></label><br>'}
+   <label>Email<input name="email" type="email" required></label><br><label>Password<input name="password" type="password" minlength="8" required></label><br>
+   <div class="row"><button class="btn">${mode === 'login' ? 'Sign in' : 'Create account'}</button><button type="button" class="btn alt" id="sw">${mode === 'login' ? 'Create an account' : 'I have an account'}</button></div></form>`;
+  $('#sw').onclick = () => authView(mode === 'login' ? 'register' : 'login');
+  $('#f').onsubmit = act(async e => { e.preventDefault(); session = await api('/auth/' + mode, 'POST', Object.fromEntries(new FormData(e.target))); localStorage.setItem('session', JSON.stringify(session)); tab = null; render(); });
+}
+
+const shiftCard = (s, actions = '') => `<article class="card"><h3>${esc(s.role)} · ${esc(s.eventName)}</h3>
+  <p class="meta">${fmt(s.start)} to ${new Date(s.end).toLocaleTimeString([], { timeStyle: 'short' })} at ${esc(s.location)}</p>${pips(s)}
+  <p class="meta">${s.confirmed} of ${s.capacity} filled (${s.fillRate}%)${s.waitlisted ? `, ${s.waitlisted} waiting` : ''}${s.closed ? ', closed' : ''}</p>${actions}</article>`;
+
+const browse = act(async () => {
+  const events = await api('/events');
+  $('#app').innerHTML = `<h2>Browse shifts</h2><form class="card row" id="flt"><label>Event<select name="eventId"><option value="">All events</option>${events.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>
+   <label>Role<input name="role" placeholder="e.g. registration"></label><label>Date<input type="date" name="date"></label><button class="btn">Apply filters</button></form><div id="list"></div>`;
+  const load = act(async () => {
+    const q = new URLSearchParams([...new FormData($('#flt'))].filter(([, v]) => v));
+    const list = await api('/shifts?' + q);
+    $('#list').innerHTML = list.length ? list.map(s => shiftCard(s, `<button class="btn" onclick="join(${s.id})">${s.spotsLeft ? 'Join this shift' : 'Join the waitlist'}</button>`)).join('') : '<p class="empty">No open shifts match these filters.</p>';
+  });
+  $('#flt').onsubmit = e => { e.preventDefault(); load(); }; load();
+});
+const join = act(async id => { const r = await api(`/shifts/${id}/signup`, 'POST'); say(r.status === 'CONFIRMED' ? 'You\'re confirmed for this shift.' : 'The shift is full. You\'re on the waitlist.'); setTab('mine'); });
+
+const mine = act(async () => {
+  const list = await api('/signups/mine');
+  $('#app').innerHTML = '<h2>My shifts</h2>' + (list.length ? list.map(x => shiftCard(x.shift, `<span class="tag ${x.status === 'CONFIRMED' ? 'ok' : ''}">${x.status === 'CONFIRMED' ? 'Confirmed' : 'On waitlist'}</span> <button class="btn alt" onclick="cancelSignup(${x.id})">Cancel</button>`)).join('') : '<p class="empty">You haven\'t joined any shifts yet. Browse shifts to find one.</p>');
+});
+const cancelSignup = act(async id => { if (!confirm('Cancel this signup?')) return; await api('/signups/' + id, 'DELETE'); say('Signup cancelled.'); mine(); });
+
+const notes = act(async () => {
+  const list = await api('/notifications');
+  $('#app').innerHTML = '<h2>Notifications</h2>' + (list.length ? list.map(n => `<div class="card">${esc(n.message)}<p class="meta">${fmt(n.at)}</p></div>`).join('') : '<p class="empty">Nothing yet. Confirmations and waitlist updates appear here.</p>');
+});
+
+let dashboardShifts = [];
+const dash = act(async () => {
+  dashboardShifts = await api('/organizer/dashboard');
+  $('#app').innerHTML = '<h2>Dashboard</h2>' + (dashboardShifts.length ? dashboardShifts.map(s => shiftCard(s, s.closed ? '<span class="tag">Closed</span>' : `<button class="btn alt" onclick="editShift(${s.id})">Edit shift</button> <button class="btn alt" onclick="closeShift(${s.id})">Close signups</button>`)).join('') : '<p class="empty">No shifts yet. Create an event, then add shifts to it.</p>');
+});
+const closeShift = act(async id => { if (!confirm('Close signups for this shift? Volunteers already confirmed will remain confirmed.')) return; await api(`/shifts/${id}/close`, 'POST'); say('Signups closed.'); dash(); });
+const editShift = act(async id => {
+  const s = dashboardShifts.find(x => x.id === id) || await api('/shifts/' + id);
+  const start = new Date(s.start).toISOString().slice(0,16);
+  const end = new Date(s.end).toISOString().slice(0,16);
+  $('#app').innerHTML = `<h2>Edit shift</h2><form class="card" id="editSh"><div class="row">
+    <label>Role<input name="roleName" value="${esc(s.role)}" required></label>
+    <label>Starts<input type="datetime-local" name="startTime" value="${start}" required></label>
+    <label>Ends<input type="datetime-local" name="endTime" value="${end}" required></label>
+    <label>Capacity<input type="number" name="capacity" min="${s.confirmed}" value="${s.capacity}" required></label>
+    </div><p class="meta">${s.confirmed} volunteers are currently confirmed. Capacity cannot be reduced below that number.</p>
+    <div class="row"><button class="btn">Save changes</button><button type="button" class="btn alt" onclick="setTab('dash')">Cancel</button></div></form>`;
+  $('#editSh').onsubmit = act(async e => {
+    e.preventDefault(); const d = Object.fromEntries(new FormData(e.target)); d.capacity = +d.capacity;
+    await api('/shifts/' + id, 'PUT', d); say('Shift updated.'); setTab('dash');
+  });
+});
+
+const newView = act(async () => {
+  const events = (await api('/events'));
+  $('#app').innerHTML = `<h2>Create event or shift</h2><form class="card" id="ev"><h3>New event</h3><div class="row"><label>Name<input name="name" required></label><label>Date<input type="date" name="eventDate" required></label><label>Location<input name="location" required></label><button class="btn">Create event</button></div></form>
+   <form class="card" id="sh"><h3>New shift</h3><div class="row"><label>Event<select name="eventId" required>${events.map(e => `<option value="${e.id}">${esc(e.name)} (${e.eventDate})</option>`).join('')}</select></label><label>Role<input name="roleName" required></label>
+   <label>Starts<input type="datetime-local" name="startTime" required></label><label>Ends<input type="datetime-local" name="endTime" required></label><label>Capacity<input type="number" name="capacity" min="1" value="5" required></label><button class="btn">Create shift</button></div></form>`;
+  $('#ev').onsubmit = act(async e => { e.preventDefault(); await api('/events', 'POST', Object.fromEntries(new FormData(e.target))); say('Event created.'); newView(); });
+  $('#sh').onsubmit = act(async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(e.target)); const id = d.eventId; delete d.eventId; d.capacity = +d.capacity; await api(`/events/${id}/shifts`, 'POST', d); say('Shift created.'); setTab('dash'); });
+});
+render();
+</script>
+</body>
+</html>

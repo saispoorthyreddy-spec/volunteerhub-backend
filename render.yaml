@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: shiftboard
+    runtime: docker
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_URL
+        sync: false   # jdbc:postgresql://HOST:5432/DBNAME (from your Render Postgres)
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+
+      - key: FRONTEND_ORIGIN
+        sync: false   # https://your-vercel-app.vercel.app
